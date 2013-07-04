@@ -9,6 +9,8 @@ Usage
 1. Check out from github
 
         git clone git://github.com/chenkaie/Junkcode.git ~/Junkcode
+		cd ~/Junkcode
+		git submodule update --init
 
 AUTHOR
 ======
