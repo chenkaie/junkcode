@@ -1,0 +1,17 @@
+123asdad12:wasdasd#include <unistd.h>
+#include <fcntl.h>
+aaa
+int main(int argc,char *argv[]){
+	int fd;
+	struct flock lock;
+
+	fd=open("test.tmp", O_RDONLY);
+
+	lock.l_whence=SEEK_SET;
+	lock.l_start=0;
+	lock.l_len=0;	//lock whole file
+
+	fcntl(fd,F_SETLKW,&lock);
+	while(1) sleep(60);
+	
+}

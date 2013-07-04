@@ -1,0 +1,26 @@
+$ gdb `which gdb`
+GNU gdb 6.7.1-debian
+(gdb) start
+Breakpoint 1 at 0x807f55e
+Starting program: /usr/bin/gdb
+0x0807f55e in main ()
+(gdb) p 1+2
+$1 = 3
+(gdb) p abs(-50)
+$2 = 50
+(gdb) p puts("Hello World")
+Hello World
+$3 = 12
+(gdb)
+
+
+--------------------------------------------------------------
+(gdb) p getenv("HOME")
+$4 = -1074340217
+(gdb) x/s $4
+0xbff6de87: "/home/jserv"
+(gdb) x/s $
+0xbff6de87: "/home/jserv"
+(gdb) p (char)*$4
+$5 = 47 '/'
+(gdb)

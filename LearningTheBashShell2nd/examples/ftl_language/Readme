@@ -1,0 +1,257 @@
+ftl - a simple function-based language
+--------------------------------------
+
+Author: Cameron Newham <cam@sspl.demon.co.uk>
+Version: 2.2 (97/07/12)
+
+
+Contents
+--------
+
+0. Modification history
+1. What is ftl and what does it stand for?
+2. What use is ftl?
+3. The ftl compiler
+4. The ftl language
+5. Other
+6. Bugs
+7. Credits
+
+
+0. Modification history.
+
+1.0: 97/07/08 - First release.
+2.0: 97/07/10 - Rewrote perl functions from scratch. The original set was based
+                on ideas I had for bash. They also didn't handle lists within
+                lists. There is now a distinct difference between an atom and
+                a list.
+2.1: 97/07/11 - Finalised string quoting and quoting elements.
+                Cleared up confusion over null lists.
+2.2: 97/07/12 - Redesigned the boolean ops to be functions. Added integer
+                arithmetic. Added 'last_result' and 'append'. Fixed some bugs.
+                Removed 'while' as it doesn't make any sense in this language.
+                Added __ to all functions to avoid perl name clashes. Added
+                include library and -l compiler option. Added param checks to
+                builtins. Fixed non-working command line params.
+
+
+1. What is ftl and what does it stand for?
+
+ftl is a simple language based entirely on lists and functions. ftl doesn't
+really mean anything. I nearly called it "BASIL" (Bourne Again Shell I?
+Language). ftl probably means "faster than light" - which this language
+isn't. :-)  It could also stand for "Functional Translated Language",
+"Featureless Toy Language" ...
+
+You can tell that ftl is simple; it only has 5 reserved words and no
+variables!
+
+
+2. What use is ftl?
+
+No use what-so-ever.  I recall a similar language that I used in 2nd
+year uni (1985) to solve the "n queens problem". The solution came
+to half a page of "sal" code. This language is based on my dim recollections
+of "sal". As I don't have the specs or any printouts of "sal" code, ftl
+is probably quite different. ftl has been useful to *me* - I wrote the
+compiler (translator?) in bash and I learnt about perl along the way.
+
+Update: I obtained a copy of sal and, yes, it is quite different! Sal
+        is more complex than ftl and isn't wholly function based.
+
+Version 2.x had the perl list functions completely re-written.  I don't
+like them much... but then I don't like perl much either. One day, ftl
+will produce C as output.
+
+
+3. The ftl compiler
+
+The ftl compiler takes an ftl source file and spits out a "compiled" version.
+The compiled version is actually a perl script with some funky list
+handling routines thrown in.  You'll probably notice that I used strings
+to implement the lists. I could have used arrays, but perl disappointingly
+flattens out everything passed as parameters, and perl's pass-by-ref is
+rather icky.
+
+The compiler is written as a bash script. Currently (v 2.x) it isn't
+optimised. At least two sections of the code could be combined into one
+for starters. I'm not going to do this - the whole compiler needs to be
+yaccified and written in C.
+
+I was originally going to make the ftl compiler generate a bash script,
+but it just got too difficult to write for recursive instances, etc.
+Recursion is the name of the game for this language.
+
+To use the compiler, write or pilfer an ftl program, then run the
+compiler on it:  ftl [-v] [-V] [-l libpath] <source> [executable]
+
+The -v flag turns on verbosity... it prints the lines of source as
+it parses them.  If you don't specify an executable name, the output
+gets written to 'ftl.out'.
+
+-V Prints the version number of the compiler.
+
+-l libpath  specifies a path to find the 'ftl.fns' file. The default is
+the current directory.
+
+The compiler will pick up most errors - it will give you an error message
+with the line number and the problem. There are some warnings that are also
+generated if you pass too few or too many parameters to functions, or you
+use a function before it is defined. The warnings won't halt compilation -
+other errors will.
+
+
+4. The ftl language
+
+The language is very basic - which is a Good Thing (tm).
+
+ftl supports two types: strings and lists. strings are considered atomic and
+are may be enclosed in double quotes. Numbers are considered to be strings.
+Lists are surrounded by curly brackets and the members are delimited by commas.
+
+Here are some ftl atoms:
+"12344"
+"qwerty"
+"high5"
+
+Here are some ftl lists:
+{1}
+{1234,99,1}
+{hello,102}
+{{my,list} {our,list}}
+{"a spaced element",a,b,c}
+{}
+
+* Note that {} is the null list. It is distinct from the null member, "".
+
+* Also note that {,} is shorthand for {"",""}. {""} is NOT the same as {};
+  The first list contains one element which is null, and the second is
+  a null list.  Attempting to take the head of {} is undefined. Taking the
+  tail of {} produces {}.
+
+* To preserve spaces in a list element, surround it with double quotes.
+
+
+The structure of an ftl file is as follows:
+
+<function definitions>
+<main>
+
+Comments are single line using the standard # for the comment begining.
+You can use spaces and carriage returns anywhere, except in strings.
+To put a c/r in a string for printing, use '\n'.
+
+Functions are defined using the 'fn' keyword:
+
+fn <funcname> (<parameters>) { <statements> }
+
+Parameters can be literals or function calls. Multiple parameters are
+separated by spaces.
+
+A statement can consist of a function call or a control structure. The
+available control structures are:
+
+if (<condition>) { <statements> } [elsif (<condition>) {statements}] ...
+                                  [else (<condition>) {statements}]
+
+A condition can be composed of functions and literals.
+
+You can use the 'return' statement to exit a function and return a value, eg:
+
+  return ("5")
+
+By default, the value of a function is the last statement executed in
+the function (suprise suprise - just like perl).
+
+
+The following built-in functions are available:
+
+atomic (item)
+    Returns true if the item is atomic (ie: a string) and false if it
+    is a list. eg:
+
+    atomic(head({a,b,c}))  # returns true
+
+make_list (items...)
+    Returns a list made up of the given items. eg:
+
+    make_list("one" {2,{2}} "three")  # returns the list {one,{2,{2}},three}
+
+concat (items...)
+    Returns a list by concatenating items. eg:
+
+    concat("one" {2,{2}} "three")  # returns the list {one,2,{2},three}
+
+add_head (item, list)
+    Adds the item to the head of the given list and returns the new list. eg:
+
+    add_head("hello" {9})  # returns the list {hello,9}
+
+add_tail (item, list)
+    Adds the item to the tail of the given list and returns the new list. eg:
+
+    add_tail("hello" {9})  # returns the list {9,hello}
+
+head (list)
+    Returns the head of the given list. It returns whatever the first member
+    of the list is - a string or another list. If the list is null, then it
+    returns undefined and stops with an execution error.
+
+tail (list)
+    Returns everything but the head of the given list. If the there is only
+    one member in the list, tail returns a null list, {}. Likewise for
+    passing a null list to tail.
+
+last_result ()
+    Returns the result of the last *user defined* function (does not
+    recompute the last function call to do this).
+
+display (item)
+    Prints the given item. Escaped characters are supported inside strings.
+
+equ(a b) neq(a b) gtn(a b) ltn(a b) gte(a b) lte(a b) and(a b) or(a b) not(a)
+add(a b) sub(a b) mul(a b) div(a b) inc(a) dec(a)
+    Equal, Not Equal, Greater Than, Less Than, Greater or Equal, Less or Equal,
+    Logical AND, Logical OR, Logical NOT, Add, Subtract, Multiply, Divide
+    Increment, Decrement.
+
+There are no variables in ftl! The only objects are functions, parameters
+and literals.  Parameter and function names start with a letter and can
+then be any sequence of letters/digits. Arguments to main are numbers
+prefixed with a $. The first argument to your program is argument $0.
+
+eg:
+
+/home/cam> myprog '{apple pear}'
+
+The list {apple,pear} can be printed with:  display($0)
+(note that lists on the command line must be enclosed in single quotes).
+
+
+5. Other
+
+Ok, so you can't do much with it... but I never claimed it was nobel
+prize winning stuff!
+
+I won't be porting this to toy operating systems (eg: Microsoft Windows
+or Windows NT).
+
+
+6. Bugs
+
+- Lots.
+- A comment on the same line as an else/elsif throws the compiler.
+- Some type checking is not done... eg: inc({a}).
+- Adds extra ,'s to the end of function params sometimes.
+- Could do without block's ({...}) for single statements.
+- It's all too slow and cumbersome.
+
+
+7. Credits
+
+Chris McDonald (University of Western Australia) for creating Sal and
+inflicting it upon us poor 2nd year students ;-)  Chet Ramey for
+Bash 2.
+
+Please direct all comments on ftl to cam@iinet.com.au.
+

@@ -1,0 +1,44 @@
+
+Examples from "Learning the bash Shell", second edition.
+--------------------------------------------------------
+
+Archive Version: 2.0
+
+This archive contains nearly all the examples from the book. I
+say "nearly all" because I didn't bother including the simple
+one or two line examples, or any examples which were just
+psuedo-code.
+
+Just about all of the examples will work with bash versions 1.14 and
+later. There is very little that will only run under bash 2.0.
+If you have the earlier version of bash, you won't be able to run
+the debugger. Update to 2.0.
+
+I've also included some bonus shell stuff and a partial solution
+to one of the exercises.
+
+The examples assume that you have bash as your standard shell. If not,
+put a  #!/bin/bash  (or whatever you bash path is) at the top of each
+one.
+
+These examples should work. I wrote nearly all of them, tested
+them, and then copy/pasted into the electronic manuscript of LtbS.
+To create this archive, I went through the manuscript and copy/pasted
+out to new files (removing formatting characters in the process) to
+make sure what is in the archive corresponds with the book. I didn't
+test all of the new versions - so there is a tiny chance that some
+don't work (probably because of formatting characters that I didn't
+remove - the examples as printed in the book should work. I hate it
+when I use a technical book and the examples don't work, so you can
+rest assured I have double checked mine :) ).
+
+If you find any that don't work, for any reason, please send email
+to O'Reilly's (bookquestions@ora.com) or to me (cam@iinet.com.au).
+Please send problems with the *book* to bookquestions@ora.com.
+
+I hope you find the book and examples useful!
+
+Cameron Newham
+Middlesex, England
+August 1997.
+

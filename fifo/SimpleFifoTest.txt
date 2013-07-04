@@ -1,0 +1,5 @@
+#!/bin/sh
+1st. mkfifo foo
+2nd.  echo "Hello world" > foo
+3rd.  cat < foo
+

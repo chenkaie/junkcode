@@ -1,0 +1,70 @@
+<html>
+<head>
+<title>eServ Demo</title>
+<meta http-equiv="description" content="There is no place like 127.0.0.1">
+<script src="jquery.min.js" type="text/javascript"></script>
+<style type="text/css" media="screen">
+.inputtext {
+	width :5em;
+	border:1px solid #ccc;
+}
+</style>
+</head>
+<body>
+<p>
+<img src="alien.png">
+</p>
+<select id="lAdd"><option value="1">1</option><option value="2">2</option></select>
+<span>&nbsp;+&nbsp;</span>
+<select id="rAdd"><option value="1">1</option><option value="2">2</option></select>
+<span>&nbsp;=&nbsp;</span>
+<span id="addSum"></span><br />
+<button type="button" id="btnAdd">Add</button>
+<hr />
+
+username: <input type="text" id="user" class="inputtext"/><br />
+password: <input type="text" id="passwd" class="inputtext"/><br />
+<button type="button" id="btnLogin">Login</button>
+<hr />
+			
+<span>this will get hello.txt in the web root</span><br />
+<button type="button" id="btnGetTxt">GetTxt</button>
+<p id="txt"></p>
+<hr />
+
+<span><a href="gallery.html">Goto gallery</a></span><br />
+<hr />
+
+</body>
+
+</html>
+<script>
+$("#btnAdd").click(
+	function(){
+		$.get("sum.cgi" ,
+		{lAdd:$("#lAdd").val(),rAdd:$("#rAdd").val()},
+		function(data){
+			$("#addSum")[0].innerHTML=data;
+		});
+	}
+)
+
+$("#btnLogin").click(
+	function() {
+		$.post("login.cgi" ,
+		{user:$("#user").val(), passwd:$("#passwd").val()},
+		function(data) {
+			alert(data);
+		})
+	}
+)
+
+$("#btnGetTxt").click(
+	function(){
+		$.get("txt.cgi" ,
+		function(data){
+			$("#txt")[0].innerHTML=data;
+		})
+	}
+)
+</script>

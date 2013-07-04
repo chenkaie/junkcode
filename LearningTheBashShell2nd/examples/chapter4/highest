@@ -1,0 +1,14 @@
+
+#
+#       highest filename [howmany]
+#
+#       Print howmany highest-numbered lines in file filename.
+#       The input file is assumed to have lines that start with
+#       numbers.  Default for howmany is 10.
+#
+
+filename=$1
+howmany=${2:-10}
+
+sort -nr $filename | head -$howmany
+

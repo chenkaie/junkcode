@@ -1,0 +1,831 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<html>
+<head>
+  <meta http-equiv="content-type" content="text/html; charset=utf8">
+  <title>whocallme</title>
+</head>
+<body>
+<div style="text-align: center;"><big style="font-weight: bold;"><big><big><big><br>
+Who Call Me?<br>
+<br>
+<small><small><small>徐千洋<br>
+timhsu@chroot.org<br>
+</small></small></small></big></big></big></big><br>
+<div style="text-align: left;">
+<pre></pre>
+<hr style="width: 100%; height: 2px;">
+<pre><br><br>誰叫我? 有用過 gdb 對 core 檔作 bt (backtrace) 嗎? 所謂 backtrace 是用來回溯檢查函式呼叫的關係, 以便了解是由那一個函式呼叫出問題的函式. <br>尢其是在許多錯綜複雜的龐大程式碼中, backtrace 是相當有用的 debug 技巧. 而這個題目則是用來討論如何在程式執行中作 backtrace.<br><br>在實作這個技術前有兩個關鍵點要先解決:<br></pre>
+1. 如何取得此 function 返回位址.<br>
+2. 如何依據返回位址查知函式名稱.<br>
+<br>
+<hr style="width: 100%; height: 2px;"><br>
+關於第一點, 必須先了解堆疊(Stack) 和函式呼叫的處理關係. 堆疊是一個後進先出(Last-In-First-Out)的資料結構.
+當呼叫某個函式時,<span style="font-family: monospace;"> </span>相關的暫存器(Register)
+就會被存入堆疊. 而當函式返回時便會從堆疊裡取回返回位址以便回到原來呼叫的下一個指令繼續執行.<span
+ style="font-family: monospace;"> 至於</span>暫存器(Register)<span
+ style="font-family: monospace;">, </span>其中 EIP 是 Instruction
+Pointer, 用來指出 CPU 將要執行指令的位址.<span style="font-family: monospace;"> </span>ESP
+暫存器則是用來指向目前堆壘的位址.<br>
+<br>
+我們先寫個小程式來觀察可行性.<br>
+<br>
+----------- test.c -----------<br>
+void test()<br>
+{<br>
+<br>
+}<br>
+<br>
+int main()<br>
+{<br>
+<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; test();<br>
+}<br>
+------------------------------<br>
+<br>
+[tim@localhost whocallme]$ gcc -o test test.c<br>
+[tim@localhost whocallme]$ gdb ./test<br>
+GNU gdb 5.3-25mdk (Mandrake Linux)<br>
+Copyright 2002 Free Software Foundation, Inc.<br>
+GDB is free software, covered by the GNU General Public License, and
+you are<br>
+welcome to change it and/or distribute copies of it under certain<br>
+conditions.<br>
+Type "show copying" to see the conditions.<br>
+There is absolutely no warranty for GDB.&nbsp; Type "show warranty" for
+details.<br>
+This GDB was configured as "i586-mandrake-linux-gnu"...<br>
+(gdb) b test<br>
+Breakpoint 1 at 0x804832f<br>
+(gdb) r<br>
+Starting program: /home/tim/research/whocallme/test<br>
+<br>
+Breakpoint 1, 0x0804832f in test ()<br>
+(gdb) info reg<br>
+eax&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+0x0&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 0<br>
+ecx&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+0x1&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 1<br>
+edx&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+0x4014fe50&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 1075117648<br>
+ebx&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+0x4014e9a0&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 1075112352<br>
+esp&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+0xbffff698&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 0xbffff698<br>
+ebp&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+0xbffff698&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 0xbffff698<br>
+esi&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+0x40013880&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 1073821824<br>
+edi&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+0xbffff6f4&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; -1073744140<br>
+eip&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+0x804832f&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 0x804832f<br>
+<br>
+(gdb) disas test<br>
+Dump of assembler code for function test:<br>
+0x804832c &lt;test&gt;:&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+push&nbsp;&nbsp; %ebp<br>
+0x804832d &lt;test+1&gt;:&nbsp;&nbsp;&nbsp;&nbsp; mov&nbsp;&nbsp;&nbsp;
+%esp,%ebp<br>
+0x804832f &lt;test+3&gt;:&nbsp;&nbsp;&nbsp;&nbsp; pop&nbsp;&nbsp;&nbsp;
+%ebp<br>
+0x8048330 &lt;test+4&gt;:&nbsp;&nbsp;&nbsp;&nbsp; ret<br>
+End of assembler dump.<br>
+<br>
+ebp 暫存器值是 0xbffff698, 也就是原來的堆疊位址. 我們知道在呼叫函式時(call) CPU 會將返回位址存入堆疊,
+因此可以從 ebp 暫存器的位址裡面找到我們需要的返回位址:<br>
+<br>
+(gdb) p/x *0xbffff698<br>
+$1 = 0xbffff6a8<br>
+<br>
+別忘了, 一進入此函式時 push $ebp 已被執行, 因此堆疊位址已被減 4, 所以要取得正確的值還得把 4 加回去才行:<br>
+<br>
+(gdb) p/x *(0xbffff698+4)<br>
+$2 = <span style="color: rgb(255, 0, 0);">0x8048346</span><br>
+<br>
+這個值應該就是 test() 正確的返回位址, 來檢查看看:<br>
+<br>
+(gdb) disas main<br>
+Dump of assembler code for function main:<br>
+0x8048331 &lt;main&gt;:&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+push&nbsp;&nbsp; %ebp<br>
+0x8048332 &lt;main+1&gt;:&nbsp;&nbsp;&nbsp;&nbsp; mov&nbsp;&nbsp;&nbsp;
+%esp,%ebp<br>
+0x8048334 &lt;main+3&gt;:&nbsp;&nbsp;&nbsp;&nbsp; sub&nbsp;&nbsp;&nbsp;
+$0x8,%esp<br>
+0x8048337 &lt;main+6&gt;:&nbsp;&nbsp;&nbsp;&nbsp; and&nbsp;&nbsp;&nbsp;
+$0xfffffff0,%esp<br>
+0x804833a &lt;main+9&gt;:&nbsp;&nbsp;&nbsp;&nbsp; mov&nbsp;&nbsp;&nbsp;
+$0x0,%eax<br>
+0x804833f &lt;main+14&gt;:&nbsp;&nbsp;&nbsp; sub&nbsp;&nbsp;&nbsp;
+%eax,%esp<br>
+0x8048341 &lt;main+16&gt;:&nbsp;&nbsp;&nbsp; call&nbsp;&nbsp; 0x804832c
+&lt;test&gt;<br>
+<span style="color: rgb(255, 0, 0);">0x8048346
+&lt;main+21&gt;:&nbsp;&nbsp;&nbsp; leave</span><br>
+0x8048347 &lt;main+22&gt;:&nbsp;&nbsp;&nbsp; ret<br>
+0x8048348 &lt;main+23&gt;:&nbsp;&nbsp;&nbsp; nop<br>
+0x8048349 &lt;main+24&gt;:&nbsp;&nbsp;&nbsp; nop<br>
+0x804834a &lt;main+25&gt;:&nbsp;&nbsp;&nbsp; nop<br>
+0x804834b &lt;main+26&gt;:&nbsp;&nbsp;&nbsp; nop<br>
+0x804834c &lt;main+27&gt;:&nbsp;&nbsp;&nbsp; nop<br>
+0x804834d &lt;main+28&gt;:&nbsp;&nbsp;&nbsp; nop<br>
+0x804834e &lt;main+29&gt;:&nbsp;&nbsp;&nbsp; nop<br>
+0x804834f &lt;main+30&gt;:&nbsp;&nbsp;&nbsp; nop<br>
+End of assembler dump.<br>
+<br>
+果然在 call &lt;test&gt; 完後的下個指令是位於 0x8048346, 也就是 test() 返回位址.<br>
+接下來我們就用 C 和一些 assembly 配合來實作.<br>
+<br>
+------------- test-1.c ------------------<br>
+void test()<br>
+{<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; unsigned long *stack;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; asm ("movl %%ebp, %0\n"<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+: "=g"(stack));<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; printf("ret address =
+0x%x\n", *(stack+1));<br>
+<br>
+}<br>
+<br>
+int main()<br>
+{<br>
+<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; test();<br>
+}<br>
+-----------------------------------------<br>
+<br>
+[tim@localhost whocallme]$ ./test-1<br>
+ret address = <span style="color: rgb(255, 0, 0);">0x8048394</span><br>
+[tim@localhost whocallme]$ gdb ./test-1<br>
+(gdb) disas main<br>
+Dump of assembler code for function main:<br>
+0x804837f &lt;main&gt;:&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+push&nbsp;&nbsp; %ebp<br>
+0x8048380 &lt;main+1&gt;:&nbsp;&nbsp;&nbsp;&nbsp; mov&nbsp;&nbsp;&nbsp;
+%esp,%ebp<br>
+0x8048382 &lt;main+3&gt;:&nbsp;&nbsp;&nbsp;&nbsp; sub&nbsp;&nbsp;&nbsp;
+$0x8,%esp<br>
+0x8048385 &lt;main+6&gt;:&nbsp;&nbsp;&nbsp;&nbsp; and&nbsp;&nbsp;&nbsp;
+$0xfffffff0,%esp<br>
+0x8048388 &lt;main+9&gt;:&nbsp;&nbsp;&nbsp;&nbsp; mov&nbsp;&nbsp;&nbsp;
+$0x0,%eax<br>
+0x804838d &lt;main+14&gt;:&nbsp;&nbsp;&nbsp; sub&nbsp;&nbsp;&nbsp;
+%eax,%esp<br>
+0x804838f &lt;main+16&gt;:&nbsp;&nbsp;&nbsp; call&nbsp;&nbsp; 0x804835c
+&lt;test&gt;<br>
+0x8048394 &lt;main+21&gt;:&nbsp;&nbsp;&nbsp; leave<br>
+0x8048395 &lt;main+22&gt;:&nbsp;&nbsp;&nbsp; ret<br>
+0x8048396 &lt;main+23&gt;:&nbsp;&nbsp;&nbsp; nop<br>
+<br>
+第一個關鍵點目前已解決, 再來要想想怎麼要能夠依記憶體位址查知所處的函式名稱呢?<br>
+<br>
+<br>
+<hr style="width: 100%; height: 2px;"><br>
+首先使用 objdump -t 來觀察執行檔的符號表:<br>
+[tim@localhost whocallme]$ objdump -t ./test-1 | awk '{print $1" "$3"
+"$6}'|grep "F"<br>
+080482c4 F call_gmon_start<br>
+080482f0 F __do_global_dtors_aux<br>
+08048330 F frame_dummy<br>
+080484ac O __FRAME_END__<br>
+08048450 F __do_global_ctors_aux<br>
+080483f0 F __libc_csu_fini<br>
+08048250 F _init<br>
+<span style="color: rgb(255, 0, 0);">0804835c F test</span><br>
+080482a0 F _start<br>
+080483a0 F __libc_csu_init<br>
+0804837f F main<br>
+08048474 F _fini<br>
+08049598 O _GLOBAL_OFFSET_TABLE_<br>
+<br>
+既然 objdump -t 可以印出程式的函式名稱和記憶體位址, 那麼我們就試試利用 objdump 一樣的技巧吧.<br>
+objdump 是利用 <a href="http://info.sayya.org/%7Etimhsu/documents/bfd.pdf">BFD
+Library</a>(The Binary File Descriptor Library)來實作的, 底下的 bfd.c 也利用 BFD
+Library 來讀取符號表.<br>
+<br>
+--------------- bfd.c --------------------<br>
+<br>
+#include &lt;stdio.h&gt;<br>
+#include &lt;bfd.h&gt;<br>
+<br>
+int main(int argc, char **argv[])<br>
+{<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; bfd *abfd;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; long
+storage_needed;&nbsp;&nbsp; <br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; asymbol **symbol_table;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; long number_of_symbols;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; long i;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; char **matching;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; struct sec *section;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; char *symbol_name;&nbsp; <br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; long symbol_offset; <br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; long
+section_vma;&nbsp;&nbsp; <br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; long symbol_address;<br>
+<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; if (argc &lt; 2)<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+return 0;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; printf("Open %s\n", argv[1]);<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; bfd_init();<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; abfd =
+bfd_openr(argv[1],NULL);<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; if (abfd == (bfd *)0)<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; {<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+bfd_perror("bfd_openr");<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+return -1;&nbsp; <br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; }<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; if
+(!bfd_check_format_matches(abfd, bfd_object, &amp;matching))<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; {<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+return -1;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+}&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; <br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; if (!(bfd_get_file_flags
+(abfd) &amp; HAS_SYMS))<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; {<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+printf("ERROR flag!\n");<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+return -1;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; }<br>
+&nbsp;&nbsp;&nbsp; &nbsp;&nbsp;&nbsp; /* 取得符號表大小 */<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; storage_needed =
+bfd_get_symtab_upper_bound(abfd);<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; if (storage_needed &lt; 0)<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+return -1;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; symbol_table = (asymbol **)
+xmalloc(storage_needed);<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; /*
+將符號表讀進所配置的記憶體裡(symbol_table), 並傳回符號表個數 */<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; number_of_symbols =
+bfd_canonicalize_symtab(abfd, symbol_table);<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; if (number_of_symbols &lt; 0)<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+return -1;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; for(i = 0; i &lt;
+number_of_symbols; i++)<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; {<br>
+&nbsp;&nbsp;&nbsp; &nbsp;&nbsp; &nbsp;&nbsp; &nbsp;&nbsp; &nbsp;&nbsp;
+/* 檢查此符號是否為函式 */<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+if (symbol_table[i]-&gt;flags &amp; (BSF_FUNCTION|BSF_GLOBAL))<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+{<br>
+&nbsp;&nbsp;&nbsp; &nbsp;&nbsp; &nbsp;&nbsp; &nbsp;&nbsp; &nbsp;&nbsp;
+&nbsp;&nbsp; &nbsp;&nbsp;&nbsp;&nbsp; /* 反查此函式所處的區段(section)
+及區段位址(section_vma)*/<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+section = symbol_table[i]-&gt;section;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+section_vma = section-&gt;vma;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+/* 取得此函式的名稱(symbol_name), 偏移位址(symbol_offset) */<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+symbol_name = symbol_table[i]-&gt;name;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+symbol_offset = symbol_table[i]-&gt;value;<br>
+&nbsp;&nbsp;&nbsp; &nbsp;&nbsp; &nbsp;&nbsp; &nbsp;&nbsp; &nbsp;&nbsp;
+&nbsp;&nbsp; &nbsp;&nbsp;&nbsp;&nbsp; /*
+將此函式的偏移位址加上區段位址則為此函式在執行時的記憶體位址(symbol_address */<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+symbol_address = section_vma + symbol_offset;<br>
+&nbsp;&nbsp;&nbsp; &nbsp;&nbsp; &nbsp;&nbsp; &nbsp;&nbsp; &nbsp;&nbsp;
+&nbsp;&nbsp; &nbsp;&nbsp; &nbsp; /* 檢查此函式是否處在程式本文區段 */<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+if (section-&gt;flags &amp; SEC_CODE)<br>
+<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+printf("&lt;%s&gt; 0x%x 0x%x 0x%x\n",<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+symbol_name,&nbsp;&nbsp; <br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+section_vma,&nbsp;&nbsp; <br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+symbol_offset, <br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+symbol_address);<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+}&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; <br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; }<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; bfd_close(abfd);<br>
+}<br>
+<br>
+-----------------------------------------<br>
+執行結果:<br>
+[tim@localhost whocallme]$ ./bfd ./test-1<br>
+Open ./test-1<br>
+&lt;call_gmon_start&gt; 0x80482a0 0x24 0x80482c4<br>
+&lt;__do_global_dtors_aux&gt; 0x80482a0 0x50 0x80482f0<br>
+&lt;frame_dummy&gt; 0x80482a0 0x90 0x8048330<br>
+&lt;__do_global_ctors_aux&gt; 0x80482a0 0x1b0 0x8048450<br>
+&lt;__libc_csu_fini&gt; 0x80482a0 0x150 0x80483f0<br>
+&lt;_init&gt; 0x8048250 0x0 0x8048250<br>
+&lt;test&gt; 0x80482a0 0xbc <span style="color: rgb(255, 0, 0);">0x804835c</span><br>
+&lt;_start&gt; 0x80482a0 0x0 0x80482a0<br>
+&lt;__libc_csu_init&gt; 0x80482a0 0x100 0x80483a0<br>
+&lt;main&gt; 0x80482a0 0xdf 0x804837f<br>
+&lt;_fini&gt; 0x8048474 0x0 0x8048474<br>
+<br>
+現在, 我們可以依照函式名稱及記憶體位址作對照表, 即可方便查詢. 不過這其中還有個小問題, 那就是我們雖然知道各函式的起始位址,
+但是並不知道函式的結束位址, 也不知道各函式的大小. 要解決這個小問題就必須在作對照表時先作排序,
+將位址越高的函式排在越後面,把下一個函式的起始位址當作結束位址.<br>
+<br>
+--------------- bfd_dumpfun.c --------------------<br>
+/* bfd_dumpfun.c (GPL)<br>
+&nbsp;* gcc -o bfd_dumpfun bfd_dumpfun.c -lbfd<br>
+&nbsp;*<br>
+&nbsp;* Usage: ./bfd_dumpfun [binary]<br>
+&nbsp;* Note: Dump functions infomation of ELF-binary with BFD Library.<br>
+&nbsp;*&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; <br>
+&nbsp;* by TimHsu(timhsu@info.sayya.org) 2004/03/31<br>
+&nbsp;*&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; <br>
+&nbsp;*/&nbsp;&nbsp;&nbsp;&nbsp; <br>
+<br>
+#include &lt;stdio.h&gt;<br>
+#include &lt;bfd.h&gt;<br>
+<br>
+typedef struct function_table FUN_TABLE;<br>
+<br>
+/* 宣告一個包含函式名稱和位址的結構 */<br>
+struct function_table<br>
+{<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; char name[80];<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; unsigned long addr;<br>
+};<br>
+<br>
+static FUN_TABLE *fun_table;<br>
+static int table_count = 0;&nbsp;&nbsp; /* 函式個數 */<br>
+<br>
+static int compare_function(const void *a, const void *b)<br>
+{<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; FUN_TABLE *aa = (FUN_TABLE
+*) a;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; FUN_TABLE *bb = (FUN_TABLE
+*) b;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; if (aa-&gt;addr &gt;
+bb-&gt;addr)<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+return 1;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; else if (aa-&gt;addr &lt;
+bb-&gt;addr)<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+return -1;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; else<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+return 0;&nbsp;&nbsp; <br>
+}<br>
+<br>
+/* 增加一個函式資料至對照表 */ <br>
+static void add_function_table(char *name, unsigned long address)<br>
+{<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; <br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+strncpy(fun_table[table_count].name, name, 80);<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; fun_table[table_count].addr
+= address;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; table_count++;&nbsp;&nbsp; <br>
+}<br>
+&nbsp;&nbsp;&nbsp; <br>
+static void dump_function_table(void)<br>
+{<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; int i;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; for(i = 0; i &lt;
+table_count; i++)<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; {<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+printf("%-30s 0x%x\n", fun_table[i].name,<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+fun_table[i].addr);<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; <br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; }<br>
+}<br>
+<br>
+int main(int argc, char **argv[])<br>
+{<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; bfd *abfd;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; asection *text;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; long storage_needed;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; asymbol **symbol_table;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; long number_of_symbols;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; long i;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; char **matching;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; struct sec *section;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; char *symbol_name;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; long symbol_offset;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; long section_vma;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; long symbol_address;<br>
+<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; if (argc &lt; 2)&nbsp; <br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+return 0;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; printf("Open %s\n", argv[1]);<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; bfd_init();<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; abfd =
+bfd_openr(argv[1],NULL);<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; if (abfd == (bfd *)0)<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; {<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+bfd_perror("bfd_openr");<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+return -1;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; }<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; <br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; if
+(!bfd_check_format_matches(abfd, bfd_object, &amp;matching))<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; {<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+return -1;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+}&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; <br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; if (!(bfd_get_file_flags
+(abfd) &amp; HAS_SYMS))<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; {<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+printf("ERROR flag!\n");<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+return -1;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; }<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; storage_needed =
+bfd_get_symtab_upper_bound(abfd);<br>
+<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; if (storage_needed &lt; 0)<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+return -1;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; symbol_table = (asymbol **)
+xmalloc(storage_needed);<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; number_of_symbols =
+bfd_canonicalize_symtab(abfd, symbol_table);<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; if (number_of_symbols &lt; 0)<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+return -1;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; fun_table = (FUN_TABLE
+**)malloc(sizeof(FUN_TABLE)*number_of_symbols);<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; bzero(fun_table,
+sizeof(FUN_TABLE)*number_of_symbols);<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; for(i = 0; i &lt;
+number_of_symbols; i++)<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; {<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+if (symbol_table[i]-&gt;flags &amp; (BSF_FUNCTION|BSF_GLOBAL))<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+{<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+section = symbol_table[i]-&gt;section;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+section_vma = section-&gt;vma;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+symbol_name = symbol_table[i]-&gt;name;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+symbol_offset = symbol_table[i]-&gt;value;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+symbol_address = section_vma + symbol_offset;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+if (section-&gt;flags &amp; SEC_CODE)<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+{<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+add_function_table(symbol_name,<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+}<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+}<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; }<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; bfd_close(abfd);<br>
+&nbsp;&nbsp;&nbsp; &nbsp;&nbsp;&nbsp; /* 將函式對照表作排序 */<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; qsort(fun_table,
+table_count, sizeof(FUN_TABLE), compare_function);<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; dump_function_table();<br>
+}<br>
+-----------------------------------------<br>
+執行結果:<br>
+[tim@localhost whocallme]$ ./bfd_dumpfun ./test-1<br>
+Open ./test-1<br>
+_init&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+0x8048250<br>
+_start&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+0x80482a0<br>
+call_gmon_start&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+0x80482c4<br>
+__do_global_dtors_aux&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+0x80482f0<br>
+frame_dummy&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+0x8048330<br>
+test&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+0x804835c<br>
+main&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+0x804837f<br>
+__libc_csu_init&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+0x80483a0<br>
+__libc_csu_fini&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+0x80483f0<br>
+__do_global_ctors_aux&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+0x8048450<br>
+_fini&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+0x8048474<br>
+<br>
+<br>
+現在, 我們已經把技術的關鍵點都處理好了, 為了讓它能夠實用化, 最好是作成函式庫, 在有需要時能夠隨時呼叫.<br>
+<br>
+------------- whocallme.h ------------------------<br>
+#include &lt;stdio.h&gt;<br>
+<br>
+#define
+FUNCTION_NAME_MAXLEN&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+80<br>
+<br>
+#define who_call_me()&nbsp;&nbsp; \<br>
+do { \<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; unsigned long
+*stack;&nbsp;&nbsp; \<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; asm ("movl %%ebp,
+%0\n"&nbsp; \<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+: "=g"(stack));&nbsp; \<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; fprintf(stderr,
+"&lt;whocallme&gt;: function &lt;%s&gt; call me &lt;%s&gt;!\n", \<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+find_function_by_addr(*(stack+1)), who_am_i()); \<br>
+} while(0)<br>
+<br>
+<br>
+extern int init_function_table(char *);<br>
+----------------------------------------------------<br>
+--------------- whocallme.c ------------------------<br>
+/* whocallme.c (GPL)<br>
+&nbsp;*<br>
+&nbsp;* A runtime backtrace of function. <br>
+&nbsp;* http://info.sayya.org/~timhsu/research/whocallme<br>
+&nbsp;* <br>
+&nbsp;* <br>
+&nbsp;* by Timhsu(timhsu@sayya.org) 2004/03/31<br>
+&nbsp;*<br>
+&nbsp;*/<br>
+<br>
+#include &lt;stdio.h&gt;<br>
+#include &lt;bfd.h&gt;<br>
+#include "whocallme.h"<br>
+<br>
+typedef struct function_table FUN_TABLE;<br>
+/* 宣告一個包含函式名稱和位址的結構 */<br>
+struct function_table<br>
+{<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; char
+name[FUNCTION_NAME_MAXLEN];<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; unsigned long addr;<br>
+};<br>
+static int compare_function(const void *a, const void *b)<br>
+{<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; FUN_TABLE *aa = (FUN_TABLE
+*) a;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; FUN_TABLE *bb = (FUN_TABLE
+*) b;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; if (aa-&gt;addr &gt;
+bb-&gt;addr)<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+return 1;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; else if (aa-&gt;addr &lt;
+bb-&gt;addr)<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+return -1;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; else<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+return 0;<br>
+}<br>
+/* 增加一個函式資料至對照表 */<br>
+static void add_function_table(char *name, unsigned long address)<br>
+{<br>
+<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+strncpy(fun_table[table_count].name, name, FUNCTION_NAME_MAXLEN);<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; fun_table[table_count].addr
+= address;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; table_count++;<br>
+}<br>
+/* 顯示函式對照表的全部資料 */&nbsp; <br>
+static void dump_function_table(void)<br>
+{<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; int i;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; for(i = 0; i &lt;
+table_count; i++)<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; {<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+fprintf(stderr, "%-30s 0x%x\n",<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+fun_table[i].name,<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+fun_table[i].addr);<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; }<br>
+}&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+<br>
+/* 取得目前正在執行的函式名稱 */<br>
+char * who_am_i(void)<br>
+{<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; unsigned long
+*stack;&nbsp;&nbsp; \<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; asm ("movl %%ebp,
+%0\n"&nbsp; \<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+: "=g"(stack));&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; <br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; return
+find_function_by_addr(*(stack+1));&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+<br>
+}<br>
+/* 依照位址取得函式名稱 */<br>
+char *find_function_by_addr(unsigned long addr)<br>
+{<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; int i;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; for(i = 0; i &lt;
+table_count; i++)<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; {<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+if (addr &gt; fun_table[i].addr)<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+{<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+if (addr &lt; fun_table[i+1].addr)<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+return fun_table[i].name;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+}<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; }<br>
+<br>
+}<br>
+/* 初始化函式對照表 */<br>
+int init_function_table(char *file)<br>
+{<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; bfd *abfd;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; long storage_needed;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; asymbol **symbol_table;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; long number_of_symbols;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; long i;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; char **matching;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; struct sec *section;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; char *symbol_name;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; long symbol_offset;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; long section_vma;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; long symbol_address;<br>
+<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; bfd_init();<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; abfd = bfd_openr(file,NULL);<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; if (abfd == (bfd *)0)<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; {<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+bfd_perror("bfd_openr");<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+return -1;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; }<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; if
+(!bfd_check_format_matches(abfd, bfd_object, &amp;matching))<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; {<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+return -1;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; }<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; if (!(bfd_get_file_flags
+(abfd) &amp; HAS_SYMS))<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; {<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+printf("ERROR flag!\n");<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+return -1;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; }<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; /* 取得符號表大小 */<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; storage_needed =
+bfd_get_symtab_upper_bound(abfd);<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; if (storage_needed &lt; 0)<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+return -1;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; symbol_table = (asymbol **)
+xmalloc(storage_needed);<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; /*
+將符號表讀進所配置的記憶體裡(symbol_table), 並傳回符號表個數 */<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; number_of_symbols =
+bfd_canonicalize_symtab(abfd, symbol_table);<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; if (number_of_symbols &lt; 0)<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+return -1;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; /* 配置空間給函式對照表 */<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; fun_table = (FUN_TABLE
+**)malloc(sizeof(FUN_TABLE)*number_of_symbols);<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; bzero(fun_table,
+sizeof(FUN_TABLE)*number_of_symbols);<br>
+<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; for(i = 0; i &lt;
+number_of_symbols; i++)<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; {<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+/* 檢查此符號是否為函式 */<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+if (symbol_table[i]-&gt;flags &amp; (BSF_FUNCTION|BSF_GLOBAL))<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+{<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+/* 反查此函式所處的區段(section) 及區段位址(section_vma)*/<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+section = symbol_table[i]-&gt;section;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+section_vma = section-&gt;vma;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+/* 取得此函式的名稱(symbol_name), 偏移位址(symbol_offset) */<br>
+<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+symbol_name = symbol_table[i]-&gt;name;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+symbol_offset = symbol_table[i]-&gt;value;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+/* 將此函式的偏移位址加上區段位址則為此函式在執行時的記&gt;憶體位址(symbol_address */<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+symbol_address = section_vma + symbol_offset;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+/* 檢查此函式是否處在程式本文區段 */<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+if (section-&gt;flags &amp; SEC_CODE)<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+{<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+/* 將此函式名稱和位址加入至對照表 */<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+add_function_table(symbol_name,<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+symbol_address);<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+}<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+}<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; }<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; free(symbol_table);<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; bfd_close(abfd);<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; /* 將函式對照表作排序 */<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; qsort(fun_table,
+table_count, sizeof(FUN_TABLE), compare_function);<br>
+}<br>
+<br>
+----------------------------------------------<br>
+[tim@localhost whocallme]$ gcc -c whocallme.c<br>
+[tim@localhost whocallme]$ ar -q libwhocallme.a whocallme.o<br>
+<br>
+來寫個小小的測試程式試試看:<br>
+<br>
+---------------- test-2.c --------------------------<br>
+<br>
+#include "whocallme.h"<br>
+<br>
+void test()<br>
+{<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; who_call_me();&nbsp; <br>
+}<br>
+void test_a()<br>
+{<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; test_b();<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; test_c();<br>
+}<br>
+void test_b()<br>
+{<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; test(); <br>
+}<br>
+void test_c()<br>
+{<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; who_call_me();&nbsp; <br>
+}<br>
+int main(int argc, char *argv[])<br>
+{<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; init_function_table(argv[0]);<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; test();<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+test_a();&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; <br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; test_b();<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; test_c();<br>
+}<br>
+----------------------------------------------<br>
+執行結果:<br>
+[tim@localhost whocallme]$ gcc -o test-2 test-2.c -lbfd -L. -lwhocallme<br>
+[tim@localhost whocallme]$ ./test-2<br>
+&lt;whocallme&gt;: function &lt;main&gt; call me &lt;test&gt;!<br>
+&lt;whocallme&gt;: function &lt;test_b&gt; call me &lt;test&gt;!<br>
+&lt;whocallme&gt;: function &lt;test_a&gt; call me &lt;test_c&gt;!<br>
+&lt;whocallme&gt;: function &lt;test_b&gt; call me &lt;test&gt;!<br>
+&lt;whocallme&gt;: function &lt;main&gt; call me &lt;test_c&gt;!<br>
+<br>
+<hr style="width: 100%; height: 2px;">下載:<br>
+<a href="http://info.sayya.org/%7Etimhsu/source/whocallme.tgz">whocallme.tgz</a><br>
+<br>
+<br>
+<br>
+</div>
+</div>
+</body>
+</html>

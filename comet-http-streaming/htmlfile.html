@@ -1,0 +1,36 @@
+<!DOCTYPE HTML>
+<html>
+	<head>
+		<meta http-equiv="content-type" content="text/html; charset=utf-8">
+		<script type="text/javascript">
+			function callbackFn(data) {
+				document.body.innerHTML = data;
+				//document.body.innerHTML += (new Date()).getSeconds() + "." + (new Date()).getMilliseconds() + ":" + data + "<br/>";
+			}
+
+			function connect_htmlfile(url, callback) {
+				transferDoc = new ActiveXObject("htmlfile");
+				transferDoc.open();
+				transferDoc.write( "<html><div><iframe src=\"" + url + "\"></iframe></div><\/html>");
+				transferDoc.close();
+				transferDoc.parentWindow.callback = callback;
+			}
+
+			function htmlfile_close() {
+				transferDoc = null;
+				CollectGarbage();
+			}
+
+		</script>
+		<title>HiddenIframe</title>
+	</head>
+	<body onload='connect_htmlfile("/cgi-bin/admin/volalarm.cgi?ua=iesux&interval=300", callbackFn);' onunload='htmlfile_close();'>
+		<!--<iframe name="hidden" id="hidden" src="/cgi-bin/admin/volalarm.cgi?ua=iesux" frameborder="0" height="0" width="100%"></iframe>-->
+		<!--<iframe name="hidden" id="hidden" src="/cgi-bin/admin/getSystemTime.cgi" frameborder="0" height="0" width="100%"></iframe>-->
+	</body>
+</html>
+
+<!--
+	Reference:
+	http://cometdaily.com/2007/11/18/ie-activexhtmlfile-transport-part-ii/
+-->

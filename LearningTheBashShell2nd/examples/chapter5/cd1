@@ -1,0 +1,9 @@
+
+cd ()
+{
+    builtin cd "$@"
+    es=$?
+    echo "$OLDPWD --> $PWD"
+    return $es
+}
+

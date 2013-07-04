@@ -1,0 +1,3 @@
+#!/bin/sh
+while true; do ((n++)); echo $n; sleep 1; done
+

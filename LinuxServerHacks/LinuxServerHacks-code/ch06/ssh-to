@@ -1,0 +1,5 @@
+#!/bin/sh
+#
+# What's the -AC for?  Forward the Agent, and do Compression.
+#
+ssh -AC `basename $0` $*

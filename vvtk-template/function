@@ -1,0 +1,24 @@
+/*!
+ *********************************************************************
+ * \brief
+ * Description the functionality of this API.
+ *
+ * \param phObject
+ * \a (o) pointer to receive the instance's handle of this object.
+ *
+ * \param Param2
+ * \a (i) description of parameter 2
+ *
+ * \retval S_OK
+ * Initialize \b Module OK.
+ * \retval S_FAIL
+ * Initialize \b Module failed.
+ *
+ * \remark
+ * Remarks of this API.
+ *
+ * \see See also to other functions
+ *
+ ******************************************************************** 
+ */
+

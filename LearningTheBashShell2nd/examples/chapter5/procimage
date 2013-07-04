@@ -1,0 +1,32 @@
+
+filename=$1
+extension=${filename##*.}
+ppmfile=${filename%.*}.ppm
+outfile=${filename%.*}.gif
+
+if [ -z $filename ]; then
+    echo "procfile: No file specified"
+    exit 1
+fi
+
+if [ $extension = gif ]; then
+    exit 0
+elif [ $extension = tga ]; then
+    tgatoppm $filename > $ppmfile
+elif [ $extension = xpm ]; then
+    xpmtoppm $filename > $ppmfile
+elif [ $extension = pcx ]; then
+    pcxtoppm $filename > $ppmfile
+elif [ $extension = tif ]; then
+    tifftopnm $filename > $ppmfile
+elif [ $extension = jpg ]; then
+    djpeg $filename > $ppmfile
+else
+    echo "procfile: $filename is an unknown graphics file."
+    exit 1
+fi
+
+ppmquant -quiet 256 $ppmfile | ppmtogif -quiet > $outfile
+
+rm $ppmfile
+

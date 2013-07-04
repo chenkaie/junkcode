@@ -1,0 +1,27 @@
+#!/bin/bash
+
+if [ -z "$2" -o ! -r "$1" ]; then
+  echo "Usage: mince [file] [chunk size]"
+  exit 255
+fi
+
+SIZE=`ls -l $1 | tr -s 'a-zA-Z -' ' ' | cut -f 3 -d ' '`
+echo "size = $SIZE"
+
+if [ $2 -gt $SIZE ]; then
+  echo "Your chunk size must be smaller than the file size!"
+  exit 254
+fi
+
+CHUNK=$2
+TOTAL=0
+PASS=0
+while [ $TOTAL -lt $SIZE ]; do
+  PASS=$((PASS + 1))
+  echo "Creating $1.$PASS..."
+  dd conv=noerror if=$1 of=$1.$PASS bs=$CHUNK skip=$((PASS - 1)) count=1 2> /dev/null
+  TOTAL=$((TOTAL + CHUNK))
+done
+
+echo "Created $PASS chunks out of $1."
+

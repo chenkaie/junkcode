@@ -1,0 +1,12 @@
+Manifest       - This file
+Readme         - Readme file
+chapter4       - Bash book examples from Chapter 4
+chapter5       - Bash book examples from Chapter 5
+chapter6       - Bash book examples from Chapter 6
+chapter7       - Bash book examples from Chapter 7
+chapter8       - Bash book examples from Chapter 8
+chapter9       - Bash book examples from Chapter 9
+debugger       - Bash Shell Debugger
+ftl_language   - A compiler for a small language, written in bash
+somesolutions  - Solutions to some of the bash book problems
+

@@ -1,0 +1,15 @@
+
+findterm () {
+    TERM=vt100       # assume this as a default
+    line=$(tty)
+    while read dev termtype; do
+        if [ $dev = $line ]; then
+            TERM=$termtype
+            echo "TERM set to $TERM."
+            break;
+        fi
+    done
+}
+
+findterm < /etc/terms
+

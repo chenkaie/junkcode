@@ -1,0 +1,36 @@
+options {
+  port 5000;
+  ifconfig /sbin/ifconfig;
+  route /sbin/route;
+  syslog auth;
+}
+
+default {
+  compress no;
+  speed 0;
+}
+
+home {
+  type tun;
+  proto tcp;
+  stat yes;
+  keepalive yes;
+
+  pass sHHH;            # Password is REQUIRED.
+
+  up {
+     ifconfig "%% 208.201.239.32 pointopoint 208.201.239.33";
+
+     program /sbin/arp "-Ds 208.201.239.33 %% pub";
+     program /sbin/arp "-Ds 208.201.239.33 eth0 pub";
+
+     route "add -net 10.42.0.0/16 gw 208.201.239.33";
+  };
+
+  down {
+     program /sbin/arp "-d 208.201.239.33 -i %%";
+     program /sbin/arp "-d 208.201.239.33 -i eth0";
+
+     route "del -net 10.42.0.0/16 gw 208.201.239.33";
+  };
+}

@@ -1,0 +1,194 @@
+#!/usr/bin/perl -w
+
+# vtund wrapper in need of a better name.
+#
+# (c)2002 Schuyler Erle & Rob Flickenger
+#
+################ CONFIGURATION
+
+# If TunnelName is blank, the wrapper will look at @ARGV or $0.
+#
+# Config is TunnelName, LocalIP, RemoteIP, TunnelHost, TunnelPort, Secret
+#
+my $TunnelName	= ""; 
+my $Config	= q{
+    home	208.201.239.33	208.201.239.32	208.201.239.5	5000	sHHH
+    tunnel2	10.0.1.100		10.0.1.1		192.168.1.4		6001	foobar
+};
+
+################ MAIN PROGRAM BEGINS HERE
+
+use POSIX 'tmpnam';
+use IO::File;
+use File::Basename;
+use strict;
+
+# Where to find things...
+#
+$ENV{PATH}   = "/bin:/usr/bin:/usr/local/bin:/sbin:/usr/sbin:/usr/local/sbin";
+my $IP_Match = '((?:\d{1,3}\.){3}\d{1,3})';            # match xxx.xxx.xxx.xxx
+my $Ifconfig = "ifconfig -a";
+my $Netstat  = "netstat -rn";
+my $Vtund    = "/bin/echo";
+my $Debug    = 1;
+
+# Load the template from the data section.
+#
+my $template = join( "", <DATA> );
+
+# Open a temp file -- adapted from Perl Cookbook, 1st Ed., sec. 7.5.
+#
+my ( $file, $name ) = ("", "");
+$name = tmpnam() until $file = IO::File->new( $name, O_RDWR|O_CREAT|O_EXCL );
+END { unlink( $name ) or warn "Can't remove temporary file $name!\n"; }
+
+# If no TunnelName is specified, use the first thing on the command line,
+# or if there isn't one, the basename of the script.
+# This allows users to symlink different tunnel names to the same script.
+#
+$TunnelName ||= shift(@ARGV) || basename($0);
+die "Can't determine tunnel config to use!\n" unless $TunnelName;
+
+# Parse config.
+#
+my ($LocalIP, $RemoteIP, $TunnelHost, $TunnelPort, $Secret);
+for (split(/\r*\n+/, $Config)) {
+    my ($conf, @vars) = grep( $_ ne "", split( /\s+/ ));
+    next if not $conf or $conf =~ /^\s*#/o; # skip blank lines, comments
+    if ($conf eq $TunnelName) {
+	($LocalIP, $RemoteIP, $TunnelHost, $TunnelPort, $Secret) = @vars;
+	last;
+    }
+}
+
+die "Can't determine configuration for TunnelName '$TunnelName'!\n"
+    unless $RemoteIP and $TunnelHost and $TunnelPort;
+
+# Find the default gateway.
+#
+my ( $GatewayIP, $ExternalDevice );
+
+for (qx{ $Netstat }) {
+    # In both Linux and BSD, the gateway is the next thing on the line,
+    # and the interface is the last.
+    #
+    if ( /^(?:0.0.0.0|default)\s+(\S+)\s+.*?(\S+)\s*$/o ) {
+	$GatewayIP = $1;
+	$ExternalDevice = $2;
+	last;
+    }
+}
+
+die "Can't determine default gateway!\n" unless $GatewayIP and $ExternalDevice;
+
+# Figure out the LocalIP and LocalNetwork.
+#
+my ( $LocalNetwork );
+my ( $iface, $addr, $up, $network, $mask ) = "";
+
+sub compute_netmask {
+    ($addr, $mask) = @_;
+    # We have to mask $addr with $mask because linux /sbin/route
+    # complains if the network address doesn't match the netmask.
+    #
+    my @ip = split( /\./, $addr );
+    my @mask = split( /\./, $mask );
+    $ip[$_] = ($ip[$_] + 0) & ($mask[$_] + 0) for (0..$#ip);
+    $addr = join(".", @ip);
+    return $addr;
+}
+
+for (qx{ $Ifconfig }) {
+    last unless defined $_;
+
+    # If we got a new device, stash the previous one (if any).
+    if ( /^([^\s:]+)/o ) {
+	if ( $iface eq $ExternalDevice and $network and $up ) {
+	    $LocalNetwork = $network;
+	    last;
+	}
+        $iface = $1;
+        $up = 0;
+    }
+
+    # Get the network mask for the current interface.
+    if ( /addr:$IP_Match.*?mask:$IP_Match/io ) {
+        # Linux style ifconfig.
+	compute_netmask($1, $2);
+        $network = "$addr netmask $mask";
+    } elsif ( /inet $IP_Match.*?mask 0x([a-f0-9]{8})/io ) {
+        # BSD style ifconfig.
+	($addr, $mask) = ($1, $2);
+	$mask = join(".", map( hex $_, $mask =~ /(..)/gs )); 
+	compute_netmask($addr, $mask);
+        $network = "$addr/$mask";
+    }
+
+    # Ignore interfaces that are loopback devices or aren't up.
+    $iface = "" if /\bLOOPBACK\b/o;
+    $up++       if /\bUP\b/o;
+}
+
+die "Can't determine local IP address!\n" unless $LocalIP and $LocalNetwork;
+
+# Set OS dependent variables.
+#
+my ( $GW, $NET, $PTP );
+if ( $^O eq "linux" ) {
+    $GW = "gw"; $PTP = "pointopoint"; $NET = "-net";
+} else {
+    $GW = $PTP = $NET = "";
+}
+
+# Parse the config template.
+#
+$template =~ s/(\$\w+)/$1/gee;
+
+# Write the temp file and execute vtund.
+#
+if ($Debug) {
+    print $template;
+} else {
+    print $file $template;
+    close $file;
+    system("$Vtund $name");
+}
+
+__DATA__
+
+options {
+   port $TunnelPort;
+   ifconfig /sbin/ifconfig;
+   route /sbin/route;
+}
+
+default {
+   compress no;
+   speed 0;
+}
+
+$TunnelName {	    # 'mytunnel' should really be `basename $0` or some such
+		    # for automagic config selection
+   type tun;
+   proto tcp;
+   keepalive yes;
+
+   pass $Secret;
+
+   up {
+      ifconfig "%% $LocalIP $PTP $RemoteIP arp";
+      route "add $TunnelHost $GW $GatewayIP";
+      route "delete default";
+      route "add default $GW $RemoteIP";
+      route "add $NET $LocalNetwork $GW $GatewayIP";
+   };
+
+   down {
+      ifconfig "%% down";
+      route "delete default";
+      route "delete $TunnelHost $GW $GatewayIP";
+      route "delete $NET $LocalNetwork";
+      route "add default $GW $GatewayIP";
+   };
+}
+

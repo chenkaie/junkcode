@@ -1,0 +1,55 @@
+
+# Set up the defaults
+width=1
+colour='-color grey'
+usage="Usage: $0 [-S] [-s N] [-w N] [-c S] imagefile..."
+
+# Initialise the pipeline components
+standardise=' | ppmquant -quiet 256 | ppmtogif -quiet'
+
+while getopts ":Ss:w:c:" opt; do
+    case $opt in
+      S  ) sharpness=' | pnmnlfilt -0.7 0.45' ;;
+      s  ) size=$OPTARG
+           scale=' | pnmscale -quiet -xysize $size $size' ;;
+      w  ) width=$OPTARG
+           border=' | pnmmargin $colour $width' ;;
+      c  ) colour="-color $OPTARG"
+           border=' | pnmmargin $colour $width' ;;
+      \? ) echo $usage
+           exit 1 ;;
+    esac
+done
+
+shift $(($OPTIND - 1))
+
+if [ -z "$@" ]; then
+    echo $usage
+    exit 1
+fi
+
+# Process the input files
+for filename in "$@"; do
+    case $filename in
+        *.gif ) convert=giftopnm  ;;
+
+        *.tga ) convert=tgatoppm  ;;
+
+        *.xpm ) convert=xpmtoppm  ;;
+
+        *.pcx ) convert=pcxtoppm  ;;
+
+        *.tif ) convert=tifftopnm  ;;
+
+        *.jpg ) convert=djpeg ;;
+
+            * ) echo "$0: Unknown filetype '${filename##*.}'"
+                exit 1;;
+    esac
+
+    outfile=${filename%.*}.new.gif
+
+    eval $convert $filename $scale $border $sharpness $standardise > $outfile
+
+done
+

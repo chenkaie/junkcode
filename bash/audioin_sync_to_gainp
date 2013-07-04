@@ -1,0 +1,7 @@
+#!/bin/sh
+
+RANGE=`expr $3 - $2 + 1`
+PER=`expr $1 \* 100 / $RANGE`
+#echo PER=$PER >> test
+/usr/sbin/confclient -s "cmdopt=0&audioin_c0_gainp=$PER" -p 7 &
+

@@ -1,0 +1,237 @@
+
+# After each line of the test script is executed the shell traps to
+# this function.
+
+function _steptrap
+{
+  _curline=$1        # the number of the line that just ran
+
+  (( $_trace )) && _msg "$PS4 line $_curline: ${_lines[$_curline]}"
+  
+  if (( $_steps >= 0 )); then
+    let _steps="$_steps - 1"
+  fi
+
+  # first check to see if a line number breakpoint was reached,
+  # if it was then enter the debugger
+  if _at_linenumbp ; then
+    _msg "Reached breakpoint at line $_curline"
+    _cmdloop
+
+  # it wasn't, so check whether a break condition exists and is true
+  # if it is then enter the debugger
+  elif [ -n "$_brcond" ] && eval $_brcond; then
+    _msg "Break condition $_brcond true at line $_curline"
+    _cmdloop
+
+  # it wasn't, so check if we are in step mode and the number of steps is up
+  # if it is then enter the debugger
+  elif (( $_steps == 0 )); then
+    _msg "Stopped at line $_curline"
+    _cmdloop
+  fi
+}
+
+
+# The Debugger Command Loop
+
+function _cmdloop {
+  local cmd args
+
+  while read -e -p "bashdb> " cmd args; do
+    case $cmd in
+      \? | h  ) _menu ;;          # print command menu
+      bc ) _setbc $args ;;        # set a break condition
+      bp ) _setbp $args ;;        # set a breakpoint at the given line
+      cb ) _clearbp $args ;;      # clear one or all breakpoints
+      ds ) _displayscript ;;      # list the script and show the breakpoints
+      g  ) return ;;              # "go": start/resume execution of the script
+      q  ) exit ;;                # quit
+      s  ) let _steps=${args:-1}  # single step N times (default = 1)
+           return ;;
+      x  ) _xtrace ;;             # toggle execution trace
+     \!* ) eval ${cmd#!} $args ;; # pass to the shell
+      *  ) _msg "Invalid command: '$cmd'" ;;
+    esac
+  done
+}
+
+
+# See if this line number has a breakpoint
+function _at_linenumbp
+{
+  local i=0
+
+  # Loop through the breakpoints array and check to see if any of
+  # them match the current line number. If they do return true (0)
+  # otherwise return false.
+
+  if [ "$_linebp" ]; then
+    while (( $i < ${#_linebp[@]} )); do
+      if (( ${_linebp[$i]} == $_curline )); then
+        return 0
+      fi
+      let i=$i+1
+    done
+  fi
+  return 1
+}
+
+
+# Set a breakpoint at the given line number or list breakpoints
+function _setbp
+{
+  local i
+
+  # If there are no arguments call the breakpoint list function.
+  # Otherwise check to see if the argument was a positive number.
+  # If it wasn't then print an error message. If it was then check
+  # to see if the line number contains text. If it doesn't then
+  # print an error message. If it does then echo the current
+  # breakpoints and the new addition and pipe them to "sort" and
+  # assign the result back to the list of breakpoints. This results
+  # in keeping the breakpoints in numerical sorted order.
+
+  # Note that we can remove duplicate breakpoints here by using
+  # the -u option to sort which uniquifies the list.
+
+  if [ -z $1 ]; then
+    _listbp
+  elif [ $(echo $1 | grep '^[0-9]*')  ]; then
+    if [ -n "${_lines[$1]}" ]; then
+      _linebp=($(echo $( (for i in ${_linebp[*]} $1; do
+                echo $i; done) | sort -n) ))
+      _msg "Breakpoint set at line $1"
+    else
+      _msg "Breakpoints can only be set on non-blank lines"
+    fi
+  else
+    _msg "Please specify a numeric line number"
+  fi
+}
+
+
+# List breakpoints and break conditions
+function _listbp
+{
+  if [ -n "$_linebp" ]; then
+    _msg "Breakpoints at lines: ${_linebp[*]}"
+  else
+    _msg "No breakpoints have been set"
+  fi
+
+  _msg "Break on condition:"
+  _msg "$_brcond"
+}
+
+
+# Clear individual or all breakpoints
+function _clearbp
+{
+  local i
+
+  # If there are no arguments then delete all the breakpoints.
+  # Otherwise check to see if the argument was a positive number.
+  # If it wasn't then print an error message. If it was then 
+  # echo all of the current breakpoints except the passed one.
+  # Then destroy the old array and assign the elements of
+  # the local array so we effectively recreate it, minus the passed
+  # breakpoint.
+
+  if [ -z $1 ]; then
+    unset _linebp[*]
+    _msg "All breakpoints have been cleared"
+  elif [ $(echo $1 | grep '^[0-9]*')  ]; then
+      _linebp=($(echo $(for i in ${_linebp[*]}; do
+            if (( $1 != $i )); then echo $i; fi; done) ))
+      _msg "Breakpoint cleared at line $1"
+  else
+    _msg "Please specify a numeric line number"
+  fi
+}
+
+
+# Set or clear a break condition
+function _setbc
+{
+  if [ -n "$*" ]; then
+    _brcond=$args
+    _msg "Break when true: $_brcond"
+  else
+    _brcond=
+    _msg "Break condition cleared"
+  fi
+}
+
+
+# Print out the shell script and mark the location of breakpoints
+# and the current line
+
+function _displayscript
+{
+  local i=1 j=0 bp cl
+
+  ( while (( $i < ${#_lines[@]} )); do
+      if [ ${_linebp[$j]} ] && (( ${_linebp[$j]} == $i )); then
+        bp='*'
+        let j=$j+1
+      else
+        bp=' '
+      fi
+      if (( $_curline == $i )); then
+        cl=">"
+      else
+        cl=" "
+      fi
+      echo "$i:$bp $cl  ${_lines[$i]}"
+      let i=$i+1
+    done
+  ) | more
+}
+
+
+# Toggle execution trace on/off
+function _xtrace
+{
+  let _trace="! $_trace"
+  _msg "Execution trace \c"
+  if (( $_trace )); then
+    _msg "on"
+  else
+    _msg "off"
+  fi
+}
+
+
+# Print the passed arguments to Standard Error
+function _msg
+{
+  echo -e "$@" >&2
+}
+
+
+# Print command menu
+function _menu {
+    _msg 'bashdb commands:
+         bp N                  set breakpoint at line N
+         bp                    list breakpoints and break condition
+         bc string             set break condition to string
+         bc                    clear break condition
+         cb N                  clear breakpoint at line N
+         cb                    clear all breakpoints
+         ds                    displays the test script and breakpoints
+         g                     start/resume execution
+         s [N]                 execute N statements (default 1)
+         x                     toggle execution trace on/off
+         h, ?                  print this menu
+         ! string              passes string to a shell
+         q                     quit'
+}
+
+
+
+# Erase the temporary file before exiting
+function _cleanup
+{
+  rm $_debugfile 2>/dev/null
+}

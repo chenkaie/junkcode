@@ -1,0 +1,23 @@
+M4=	m4
+CFDIR=	/usr/src/sendmail-8.12.5/cf
+CHMOD=	chmod
+ROMODE=	444
+RM=	rm -f
+
+.SUFFIXES:  .mc .cf
+
+all:    virtusers.db aliases.db access.db 
+
+access.db: access.txt
+	makemap -v hash access < access.txt
+
+aliases.db: aliases
+	newaliases
+
+virtusers.db: virtusers.txt
+	makemap -v hash virtusers < virtusers.txt
+
+.mc.cf:
+	$(RM) $@
+	$(M4) ${CFDIR}/m4/cf.m4 $*.mc > $@ || ( $(RM) $@ && exit 1 )
+	$(CHMOD) $(ROMODE) $@

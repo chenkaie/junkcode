@@ -1,0 +1,14 @@
+
+trap 'echo Thank you for playing!' EXIT
+
+magicnum=$(($RANDOM%10+1))
+echo 'Guess a number between 1 and 10:'
+while echo -n 'Guess: ' >&2 ; read guess ; do
+    sleep 4
+    if [ "$guess" = $magicnum ]; then
+        echo 'Right!'
+        exit
+    fi
+    echo 'Wrong!'
+done
+

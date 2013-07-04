@@ -1,0 +1,33 @@
+options {
+  port 5000;
+  ifconfig /sbin/ifconfig;
+  route /sbin/route;
+}
+
+default {
+  compress no;
+  speed 0;
+}
+
+home {
+  type tun;
+  proto tcp;
+  keepalive yes;
+
+  pass sHHH;            # Password is REQUIRED.
+
+  up {
+     ifconfig "%% 208.201.239.33 pointopoint 208.201.239.32 arp";
+
+     route "add 208.201.239.5 gw 10.42.3.1";
+     route "del default";
+     route "add default gw 208.201.239.32";
+
+  };
+
+  down {
+     route "del default";
+     route "del 208.201.239.5 gw 10.42.3.1";
+     route "add default gw 10.42.3.1";
+  };
+}

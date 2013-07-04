@@ -1,0 +1,28 @@
+
+for filename in "$@"; do
+    ppmfile=${filename%.*}.ppm
+
+    case $filename in
+        *.gif ) exit 0 ;;
+
+        *.tga ) tgatoppm $filename > $ppmfile ;;
+
+        *.xpm ) xpmtoppm $filename > $ppmfile ;;
+
+        *.pcx ) pcxtoppm $filename > $ppmfile ;;
+
+        *.tif ) tifftopnm $filename > $ppmfile ;;
+
+        *.jpg ) djpeg $filename > $ppmfile ;;
+
+            * ) echo "procfile: $filename is an unknown graphics file."
+                exit 1 ;;
+    esac
+
+    outfile=${ppmfile%.ppm}.new.gif
+
+    ppmquant -quiet 256 $ppmfile | ppmtogif -quiet > $outfile
+    rm $ppmfile
+
+done
+

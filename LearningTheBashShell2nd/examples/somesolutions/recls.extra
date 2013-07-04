@@ -1,0 +1,59 @@
+# Part of the solution to Questions 1 & 3, Chapter 5 of
+# "Learning the bash Shell".
+#
+# Cameron Newham, July 1997.
+
+recdir ()
+{
+  local char
+  local thistab
+
+  if [ $# -ne 0 ]; then
+    echo -e $tab$vertical
+  fi
+
+  thistab=$tab$vertical$horizontal
+  tab=$tab$vertical$singletab
+
+  for file in "$@"; do
+
+    if [ -d $dir/$file ]; then
+      char="/"
+    else
+      char=""
+    fi
+
+    echo -e $thistab$file$char
+
+    dir=$dir/$file
+    if [ -d $dir ]; then
+      recdir $(command ls $dir)
+    fi
+    dir=${dir%/*}
+  done
+  tab=${tab%|\\t}
+  echo -e $tab
+}
+
+
+recls ()
+{
+
+    singletab="\t"
+    vertical="|"
+    horizontal="-------"
+
+    for tryfile in "$@"; do
+    if [ -d $tryfile ]; then
+      echo -e $tryfile"/"
+    else
+      echo -e $tryfile
+    fi
+
+    if [ -d $tryfile ]; then
+      dir=$tryfile
+      recdir $(command ls $tryfile)
+    fi
+    done
+    unset dir singletab tab vertical horizontal
+}

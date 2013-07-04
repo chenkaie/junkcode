@@ -1,0 +1,3 @@
+# Grap any *-14_consecutive_num-* 
+echo "./12M-20120419010203-aaaa-bbb-ccc.log" | sed "s/\(.*\)-\([0-9]\{14\}\)-\(.*\)/\2/"
+echo "./12M-20120419010203-aaaa-bbb-ccc.log" | sed "s/.*-\([0-9]\{14\}\)-.*/\1/" 

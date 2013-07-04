@@ -1,0 +1,7 @@
+#!/bin/sh
+
+RANGE=`expr $3 - $2 + 1`
+VAL=`expr $1 \* $RANGE / 100`
+#echo VAL=$VAL >> test
+/usr/sbin/confclient -s "cmdopt=2&audioin_c0_gain=$VAL" -p 7 &
+

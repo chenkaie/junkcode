@@ -1,0 +1,13 @@
+
+pushd ()
+{
+    dirname=$1
+    if cd ${dirname:?"missing directory name."}   # if cd was successful
+    then
+        DIR_STACK="$dirname ${DIR_STACK:-$PWD' '}"  # push the directory
+        echo $DIR_STACK
+    else
+        echo still in $PWD.                       # else do nothing
+    fi
+}
+
