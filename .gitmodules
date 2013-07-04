@@ -1,0 +1,3 @@
+[submodule "junkcode_by_Tridge@Samba"]
+	path = junkcode_by_Tridge@Samba
+	url = git@github.com:tridge/junkcode.git
