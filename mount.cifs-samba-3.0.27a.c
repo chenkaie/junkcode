@@ -65,6 +65,10 @@
 
 #define CONST_DISCARD(type, ptr)      ((type) ((void *) (ptr)))
 
+#ifndef PATH_MAX
+#define PATH_MAX 256
+#endif
+
 const char *thisprogram;
 int verboseflag = 0;
 static int got_password = 0;
