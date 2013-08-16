@@ -1,0 +1,30 @@
+## Exercise ##
+
+1. Please write a UDP program which can send data to specific ip and port and receive data at specific port:
+	* command line input remote ip and port to send to and local listen port
+	* print out received data and remote ip and port to screen (stdout)
+	* for example: C:>udp_exercise 192.168.1.123 9999(remote) 9998(local)
+
+2. Please write a TCP server which can echo everything from client (serve one client at a time by using blocking mode)
+
+3. Please write a TCP client to communicate with the server above (blocking mode)
+
+4. Please modify exercise 2 TCP server to non-blocking mode
+	* use select
+	* server can serve multiple client simultaneously
+
+5. Please write a TCP client which can timeout in a specific interval (2 seconds)if server is not available
+
+6. Broadcast program
+	* Please setup a local network between a camera & your PC. And create a virtual machine running Linux.
+	* Setup IPs for your camera & VM so that they reside in the same local network.
+	* write a program which can broadcast data to a broadcasting address (e.g. 172.16.255.255)
+	  WARNING: Test it in your own local network, and NEVER send broadcasting packets to the coporate intranet, otherwise you'll be blamed to death!
+	* Try to use exercise 1. udp program to receive the broadcasting data
+7. Please write a pair of multicast programs to send and receive data
+
+8. Protocol development procedure
+	* Please use IE to connect to checkip.dyndns.org and log the traffic with ethereal
+	* check the log of http signaling for check public IP address
+	* write a program which can check the public IP of your PC.
+
