@@ -1,0 +1,3 @@
+[HowTo]
+	Peer1: $ ./udp_peer.out 127.0.0.1 12345 23456
+	Peer2: $ ./udp_peer.out 127.0.0.1 23456 12345
